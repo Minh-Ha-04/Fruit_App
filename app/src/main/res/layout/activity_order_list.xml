@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="16dp"
+    android:orientation="vertical">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Danh Sách Đơn Hàng"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="16dp" />
+
+    <ListView
+        android:id="@+id/orderListView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <TextView
+        android:id="@+id/emptyMessageTextView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:text="Bạn chưa có đơn hàng nào"
+        android:gravity="center"
+        android:textSize="16sp"
+        android:visibility="gone" />
+
+</LinearLayout>

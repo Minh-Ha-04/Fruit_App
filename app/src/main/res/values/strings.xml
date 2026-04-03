@@ -1,3 +1,10 @@
 <resources>
-    <string name="app_name">Fruit_App</string>
+    <string name="app_name">Fruit App</string>
+    <string name="login">Đăng Nhập</string>
+    <string name="username">Tên Đăng Nhập</string>
+    <string name="password">Mật Khẩu</string>
+    <string name="products">Xem Sản Phẩm</string>
+    <string name="categories">Xem Danh Mục</string>
+    <string name="cart">Giỏ Hàng</string>
+    <string name="logout">Đăng Xuất</string>
 </resources>
