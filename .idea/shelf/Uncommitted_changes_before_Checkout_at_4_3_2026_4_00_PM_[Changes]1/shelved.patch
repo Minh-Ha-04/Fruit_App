@@ -1,0 +1,917 @@
+Index: app/src/main/java/com/example/fruit_app/ProductDetailActivity.java
+===================================================================
+diff --git a/app/src/main/java/com/example/fruit_app/ProductDetailActivity.java b/app/src/main/java/com/example/fruit_app/ProductDetailActivity.java
+new file mode 100644
+--- /dev/null	(date 1775202622000)
++++ b/app/src/main/java/com/example/fruit_app/ProductDetailActivity.java	(date 1775202622000)
+@@ -0,0 +1,98 @@
++package com.example.fruit_app;
++
++import android.content.Intent;
++import android.os.Bundle;
++import android.widget.Button;
++import android.widget.EditText;
++import android.widget.TextView;
++import android.widget.Toast;
++
++import androidx.appcompat.app.AppCompatActivity;
++
++import com.example.fruit_app.database.AppDatabase;
++import com.example.fruit_app.entity.Product;
++import com.example.fruit_app.util.PreferenceManager;
++
++public class ProductDetailActivity extends AppCompatActivity {
++
++    private TextView productNameTextView, productDescriptionTextView, productPriceTextView;
++    private EditText quantityEditText;
++    private Button addToCartButton;
++    private AppDatabase database;
++    private PreferenceManager preferenceManager;
++    private Product product;
++    private int productId;
++    private double productPrice;
++
++    @Override
++    protected void onCreate(Bundle savedInstanceState) {
++        super.onCreate(savedInstanceState);
++        setContentView(R.layout.activity_product_detail);
++
++        database = AppDatabase.getDatabase(this);
++        preferenceManager = new PreferenceManager(this);
++
++        productNameTextView = findViewById(R.id.productNameTextView);
++        productDescriptionTextView = findViewById(R.id.productDescriptionTextView);
++        productPriceTextView = findViewById(R.id.productPriceTextView);
++        quantityEditText = findViewById(R.id.quantityEditText);
++        addToCartButton = findViewById(R.id.addToCartButton);
++
++        // Get product details from intent
++        Intent intent = getIntent();
++        productId = intent.getIntExtra("product_id", 0);
++        String productName = intent.getStringExtra("product_name");
++        String productDescription = intent.getStringExtra("product_description");
++        productPrice = intent.getDoubleExtra("product_price", 0);
++
++        productNameTextView.setText(productName);
++        productDescriptionTextView.setText(productDescription);
++        productPriceTextView.setText(String.format("Giá: %.0f VND", productPrice));
++
++        addToCartButton.setOnClickListener(v -> addToCart());
++    }
++
++    private void addToCart() {
++        String quantityStr = quantityEditText.getText().toString().trim();
++        if (quantityStr.isEmpty()) {
++            Toast.makeText(this, "Vui lòng nhập số lượng", Toast.LENGTH_SHORT).show();
++            return;
++        }
++
++        int quantity = Integer.parseInt(quantityStr);
++        if (quantity <= 0) {
++            Toast.makeText(this, "Số lượng phải lớn hơn 0", Toast.LENGTH_SHORT).show();
++            return;
++        }
++
++        // Add to order on a background thread
++        new Thread(() -> {
++            int userId = preferenceManager.getUserId();
++            
++            // Get or create pending order
++            com.example.fruit_app.entity.Order order = database.orderDao()
++                    .getOrderByUserAndStatus(userId, "Pending");
++
++            if (order == null) {
++                order = new com.example.fruit_app.entity.Order(userId, 
++                    java.time.LocalDate.now().toString(), "Pending", 0);
++                long orderId = database.orderDao().insert(order);
++                order.id = (int) orderId;
++            }
++
++            // Add order detail
++            com.example.fruit_app.entity.OrderDetail orderDetail = 
++                new com.example.fruit_app.entity.OrderDetail(order.id, productId, quantity, productPrice);
++            database.orderDetailDao().insert(orderDetail);
++
++            // Update order total
++            order.totalAmount += productPrice * quantity;
++            database.orderDao().update(order);
++
++            runOnUiThread(() -> {
++                Toast.makeText(ProductDetailActivity.this, "Đã thêm vào giỏ hàng", Toast.LENGTH_SHORT).show();
++                finish();
++            });
++        }).start();
++    }
++}
+Index: app/src/main/java/com/example/fruit_app/OrderDetailActivity.java
+===================================================================
+diff --git a/app/src/main/java/com/example/fruit_app/OrderDetailActivity.java b/app/src/main/java/com/example/fruit_app/OrderDetailActivity.java
+new file mode 100644
+--- /dev/null	(date 1775202622000)
++++ b/app/src/main/java/com/example/fruit_app/OrderDetailActivity.java	(date 1775202622000)
+@@ -0,0 +1,88 @@
++package com.example.fruit_app;
++
++import android.content.Intent;
++import android.os.Bundle;
++import android.widget.ArrayAdapter;
++import android.widget.Button;
++import android.widget.ListView;
++import android.widget.TextView;
++
++import androidx.appcompat.app.AppCompatActivity;
++
++import com.example.fruit_app.database.AppDatabase;
++import com.example.fruit_app.entity.Order;
++import com.example.fruit_app.entity.OrderDetail;
++import com.example.fruit_app.entity.Product;
++
++import java.util.ArrayList;
++import java.util.List;
++
++public class OrderDetailActivity extends AppCompatActivity {
++
++    private ListView orderDetailListView;
++    private TextView orderInfoTextView, totalAmountTextView;
++    private Button backButton;
++    private AppDatabase database;
++
++    @Override
++    protected void onCreate(Bundle savedInstanceState) {
++        super.onCreate(savedInstanceState);
++        setContentView(R.layout.activity_order_detail);
++
++        database = AppDatabase.getDatabase(this);
++
++        orderDetailListView = findViewById(R.id.orderDetailListView);
++        orderInfoTextView = findViewById(R.id.orderInfoTextView);
++        totalAmountTextView = findViewById(R.id.totalAmountTextView);
++        backButton = findViewById(R.id.backButton);
++
++        Intent intent = getIntent();
++        int orderId = intent.getIntExtra("order_id", 0);
++
++        loadOrderDetail(orderId);
++
++        backButton.setOnClickListener(v -> finish());
++    }
++
++    private void loadOrderDetail(int orderId) {
++        new Thread(() -> {
++            Order order = database.orderDao().getOrderById(orderId);
++            List<OrderDetail> orderDetails = database.orderDetailDao()
++                    .getOrderDetailsByOrder(orderId);
++
++            List<String> itemList = new ArrayList<>();
++            double total = 0;
++
++            if (order != null) {
++                for (OrderDetail detail : orderDetails) {
++                    Product product = database.productDao().getProductById(detail.productId);
++                    if (product != null) {
++                        String itemText = product.name + " x" + detail.quantity +
++                                " - " + String.format("%.0f VND", detail.price * detail.quantity);
++                        itemList.add(itemText);
++                        total += detail.price * detail.quantity;
++                    }
++                }
++            }
++
++            double finalTotal = total;
++            runOnUiThread(() -> displayOrderDetail(order, itemList, finalTotal));
++        }).start();
++    }
++
++    private void displayOrderDetail(Order order, List<String> itemList, double total) {
++        if (order == null) return;
++
++        // Hiển thị thông tin đơn hàng
++        String orderInfo = "Đơn Hàng #" + order.id + "\n" +
++                "Ngày: " + order.orderDate + "\n" +
++                "Trạng thái: " + order.status;
++        orderInfoTextView.setText(orderInfo);
++
++        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
++            android.R.layout.simple_list_item_1, itemList);
++        orderDetailListView.setAdapter(adapter);
++
++        totalAmountTextView.setText(String.format("Tổng cộng: %.0f VND", total));
++    }
++}
+Index: app/src/main/java/com/example/fruit_app/LoginActivity.java
+===================================================================
+diff --git a/app/src/main/java/com/example/fruit_app/LoginActivity.java b/app/src/main/java/com/example/fruit_app/LoginActivity.java
+new file mode 100644
+--- /dev/null	(date 1775202622000)
++++ b/app/src/main/java/com/example/fruit_app/LoginActivity.java	(date 1775202622000)
+@@ -0,0 +1,67 @@
++package com.example.fruit_app;
++
++import android.content.Intent;
++import android.os.Bundle;
++import android.widget.Button;
++import android.widget.EditText;
++import android.widget.Toast;
++
++import androidx.appcompat.app.AppCompatActivity;
++
++import com.example.fruit_app.database.AppDatabase;
++import com.example.fruit_app.entity.User;
++import com.example.fruit_app.util.PreferenceManager;
++
++public class LoginActivity extends AppCompatActivity {
++
++    private EditText usernameEditText, passwordEditText;
++    private Button loginButton;
++    private AppDatabase database;
++    private PreferenceManager preferenceManager;
++
++    @Override
++    protected void onCreate(Bundle savedInstanceState) {
++        super.onCreate(savedInstanceState);
++        setContentView(R.layout.activity_login);
++
++        // Check if already logged in
++        preferenceManager = new PreferenceManager(this);
++        if (preferenceManager.isLoggedIn()) {
++            startActivity(new Intent(LoginActivity.this, MainActivity.class));
++            finish();
++            return;
++        }
++
++        database = AppDatabase.getDatabase(this);
++        usernameEditText = findViewById(R.id.usernameEditText);
++        passwordEditText = findViewById(R.id.passwordEditText);
++        loginButton = findViewById(R.id.loginButton);
++
++        loginButton.setOnClickListener(v -> handleLogin());
++    }
++
++    private void handleLogin() {
++        String username = usernameEditText.getText().toString().trim();
++        String password = passwordEditText.getText().toString().trim();
++
++        if (username.isEmpty() || password.isEmpty()) {
++            Toast.makeText(this, "Vui lòng nhập tên đăng nhập và mật khẩu", Toast.LENGTH_SHORT).show();
++            return;
++        }
++
++        // Perform login on a background thread
++        new Thread(() -> {
++            User user = database.userDao().login(username, password);
++            runOnUiThread(() -> {
++                if (user != null) {
++                    preferenceManager.saveLogin(user.id, user.username);
++                    Toast.makeText(LoginActivity.this, "Đăng nhập thành công!", Toast.LENGTH_SHORT).show();
++                    startActivity(new Intent(LoginActivity.this, MainActivity.class));
++                    finish();
++                } else {
++                    Toast.makeText(LoginActivity.this, "Tên đăng nhập hoặc mật khẩu không đúng", Toast.LENGTH_SHORT).show();
++                }
++            });
++        }).start();
++    }
++}
+Index: app/src/main/java/com/example/fruit_app/OrderListActivity.java
+===================================================================
+diff --git a/app/src/main/java/com/example/fruit_app/OrderListActivity.java b/app/src/main/java/com/example/fruit_app/OrderListActivity.java
+new file mode 100644
+--- /dev/null	(date 1775202622000)
++++ b/app/src/main/java/com/example/fruit_app/OrderListActivity.java	(date 1775202622000)
+@@ -0,0 +1,94 @@
++package com.example.fruit_app;
++
++import android.content.Intent;
++import android.os.Bundle;
++import android.widget.ArrayAdapter;
++import android.widget.ListView;
++import android.widget.TextView;
++
++import androidx.appcompat.app.AppCompatActivity;
++
++import com.example.fruit_app.database.AppDatabase;
++import com.example.fruit_app.entity.Order;
++import com.example.fruit_app.util.PreferenceManager;
++
++import java.util.ArrayList;
++import java.util.List;
++
++public class OrderListActivity extends AppCompatActivity {
++
++    private ListView orderListView;
++    private TextView emptyMessageTextView;
++    private AppDatabase database;
++    private PreferenceManager preferenceManager;
++    private List<Order> orderList;
++
++    @Override
++    protected void onCreate(Bundle savedInstanceState) {
++        super.onCreate(savedInstanceState);
++        setContentView(R.layout.activity_order_list);
++
++        database = AppDatabase.getDatabase(this);
++        preferenceManager = new PreferenceManager(this);
++
++        orderListView = findViewById(R.id.orderListView);
++        emptyMessageTextView = findViewById(R.id.emptyMessageTextView);
++
++        loadOrders();
++    }
++
++    private void loadOrders() {
++        new Thread(() -> {
++            int userId = preferenceManager.getUserId();
++            // Lấy tất cả orders đã thanh toán (status = "Paid")
++            List<Order> allOrders = database.orderDao().getOrdersByUser(userId);
++            orderList = new ArrayList<>();
++            
++            for (Order order : allOrders) {
++                if ("Paid".equals(order.status)) {
++                    orderList.add(order);
++                }
++            }
++
++            runOnUiThread(this::displayOrders);
++        }).start();
++    }
++
++    private void displayOrders() {
++        if (orderList == null || orderList.isEmpty()) {
++            orderListView.setVisibility(ListView.GONE);
++            emptyMessageTextView.setVisibility(TextView.VISIBLE);
++            emptyMessageTextView.setText("Bạn chưa có đơn hàng nào");
++            return;
++        }
++
++        emptyMessageTextView.setVisibility(TextView.GONE);
++        orderListView.setVisibility(ListView.VISIBLE);
++
++        List<String> orderDisplay = new ArrayList<>();
++        for (Order order : orderList) {
++            String orderInfo = "Đơn #" + order.id + 
++                " | Ngày: " + order.orderDate + 
++                " | Tiền: " + String.format("%.0f VND", order.totalAmount);
++            orderDisplay.add(orderInfo);
++        }
++
++        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
++            android.R.layout.simple_list_item_1, orderDisplay);
++        orderListView.setAdapter(adapter);
++
++        // Click vào order để xem chi tiết
++        orderListView.setOnItemClickListener((parent, view, position, id) -> {
++            Order selectedOrder = orderList.get(position);
++            Intent intent = new Intent(OrderListActivity.this, OrderDetailActivity.class);
++            intent.putExtra("order_id", selectedOrder.id);
++            startActivity(intent);
++        });
++    }
++
++    @Override
++    protected void onResume() {
++        super.onResume();
++        loadOrders();
++    }
++}
+Index: app/src/main/java/com/example/fruit_app/OrderConfirmationActivity.java
+===================================================================
+diff --git a/app/src/main/java/com/example/fruit_app/OrderConfirmationActivity.java b/app/src/main/java/com/example/fruit_app/OrderConfirmationActivity.java
+new file mode 100644
+--- /dev/null	(date 1775202622000)
++++ b/app/src/main/java/com/example/fruit_app/OrderConfirmationActivity.java	(date 1775202622000)
+@@ -0,0 +1,87 @@
++package com.example.fruit_app;
++
++import android.content.Intent;
++import android.os.Bundle;
++import android.widget.ArrayAdapter;
++import android.widget.Button;
++import android.widget.ListView;
++import android.widget.TextView;
++
++import androidx.appcompat.app.AppCompatActivity;
++
++import com.example.fruit_app.database.AppDatabase;
++import com.example.fruit_app.entity.Order;
++import com.example.fruit_app.entity.OrderDetail;
++import com.example.fruit_app.entity.Product;
++
++import java.util.ArrayList;
++import java.util.List;
++
++public class OrderConfirmationActivity extends AppCompatActivity {
++
++    private ListView confirmationDetailListView;
++    private TextView confirmationMessageTextView, confirmationTotalTextView;
++    private Button homeButton;
++    private AppDatabase database;
++
++    @Override
++    protected void onCreate(Bundle savedInstanceState) {
++        super.onCreate(savedInstanceState);
++        setContentView(R.layout.activity_order_confirmation);
++
++        database = AppDatabase.getDatabase(this);
++
++        confirmationDetailListView = findViewById(R.id.confirmationDetailListView);
++        confirmationMessageTextView = findViewById(R.id.confirmationMessageTextView);
++        confirmationTotalTextView = findViewById(R.id.confirmationTotalTextView);
++        homeButton = findViewById(R.id.homeButton);
++
++        Intent intent = getIntent();
++        int orderId = intent.getIntExtra("order_id", 0);
++
++        loadOrder(orderId);
++
++        homeButton.setOnClickListener(v -> {
++            startActivity(new Intent(OrderConfirmationActivity.this, MainActivity.class));
++            finish();
++        });
++    }
++
++    private void loadOrder(int orderId) {
++        new Thread(() -> {
++            Order order = database.orderDao().getOrderById(orderId);
++
++            if (order != null) {
++                List<OrderDetail> orderDetails = database.orderDetailDao()
++                        .getOrderDetailsByOrder(orderId);
++
++                List<String> itemList = new ArrayList<>();
++                double total = 0;
++
++                for (OrderDetail detail : orderDetails) {
++                    Product product = database.productDao().getProductById(detail.productId);
++                    if (product != null) {
++                        String itemText = product.name + " x" + detail.quantity + 
++                            " - " + String.format("%.0f VND", detail.price * detail.quantity);
++                        itemList.add(itemText);
++                        total += detail.price * detail.quantity;
++                    }
++                }
++
++                double finalTotal = total;
++                runOnUiThread(() -> displayConfirmation(order, itemList, finalTotal));
++            }
++        }).start();
++    }
++
++    private void displayConfirmation(Order order, List<String> itemList, double total) {
++        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, 
++            android.R.layout.simple_list_item_1, itemList);
++        confirmationDetailListView.setAdapter(adapter);
++
++        confirmationMessageTextView.setText("✓ Đơn hàng #" + order.id + " đã được tạo thành công!\n" +
++            "Ngày đặt hàng: " + order.orderDate + "\n" +
++            "Trạng thái: " + order.status);
++        confirmationTotalTextView.setText(String.format("Tổng tiền: %.0f VND", total));
++    }
++}
+Index: app/src/main/java/com/example/fruit_app/ProductListActivity.java
+===================================================================
+diff --git a/app/src/main/java/com/example/fruit_app/ProductListActivity.java b/app/src/main/java/com/example/fruit_app/ProductListActivity.java
+new file mode 100644
+--- /dev/null	(date 1775202622000)
++++ b/app/src/main/java/com/example/fruit_app/ProductListActivity.java	(date 1775202622000)
+@@ -0,0 +1,80 @@
++package com.example.fruit_app;
++
++import android.content.Intent;
++import android.os.Bundle;
++import android.widget.ArrayAdapter;
++import android.widget.ListView;
++import android.widget.TextView;
++
++import androidx.appcompat.app.AppCompatActivity;
++
++import com.example.fruit_app.database.AppDatabase;
++import com.example.fruit_app.entity.Product;
++
++import java.util.ArrayList;
++import java.util.List;
++
++public class ProductListActivity extends AppCompatActivity {
++
++    private ListView listView;
++    private TextView titleTextView;
++    private AppDatabase database;
++    private List<Product> productList;
++    private ArrayAdapter<String> adapter;
++    private int categoryId = -1;
++    private String categoryName = "";
++
++    @Override
++    protected void onCreate(Bundle savedInstanceState) {
++        super.onCreate(savedInstanceState);
++        setContentView(R.layout.activity_product_list);
++
++        listView = findViewById(R.id.productListView);
++        titleTextView = findViewById(R.id.titleTextView);
++        database = AppDatabase.getDatabase(this);
++
++        // Kiểm tra nếu có categoryId từ intent
++        Intent intent = getIntent();
++        categoryId = intent.getIntExtra("category_id", -1);
++        categoryName = intent.getStringExtra("category_name");
++
++        // Load products
++        new Thread(() -> {
++            if (categoryId != -1) {
++                // Nếu có categoryId, lấy sản phẩm theo category
++                productList = database.productDao().getProductsByCategory(categoryId);
++                runOnUiThread(() -> {
++                    titleTextView.setText("Sản phẩm: " + categoryName);
++                    displayProducts();
++                });
++            } else {
++                // Nếu không có categoryId, lấy tất cả sản phẩm
++                productList = database.productDao().getAllProducts();
++                runOnUiThread(() -> {
++                    titleTextView.setText("Danh Sách Sản Phẩm");
++                    displayProducts();
++                });
++            }
++        }).start();
++    }
++
++    private void displayProducts() {
++        List<String> productNames = new ArrayList<>();
++        for (Product product : productList) {
++            productNames.add(product.name + " - " + String.format("%.0f VND", product.price));
++        }
++
++        adapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, productNames);
++        listView.setAdapter(adapter);
++
++        listView.setOnItemClickListener((parent, view, position, id) -> {
++            Product selectedProduct = productList.get(position);
++            Intent intent = new Intent(ProductListActivity.this, ProductDetailActivity.class);
++            intent.putExtra("product_id", selectedProduct.id);
++            intent.putExtra("product_name", selectedProduct.name);
++            intent.putExtra("product_description", selectedProduct.description);
++            intent.putExtra("product_price", selectedProduct.price);
++            startActivity(intent);
++        });
++    }
++}
+Index: app/src/main/java/com/example/fruit_app/OrderActivity.java
+===================================================================
+diff --git a/app/src/main/java/com/example/fruit_app/OrderActivity.java b/app/src/main/java/com/example/fruit_app/OrderActivity.java
+new file mode 100644
+--- /dev/null	(date 1775201702000)
++++ b/app/src/main/java/com/example/fruit_app/OrderActivity.java	(date 1775201702000)
+@@ -0,0 +1,104 @@
++package com.example.fruit_app;
++
++import android.content.Intent;
++import android.os.Bundle;
++import android.widget.ArrayAdapter;
++import android.widget.Button;
++import android.widget.ListView;
++import android.widget.TextView;
++
++import androidx.appcompat.app.AppCompatActivity;
++
++import com.example.fruit_app.database.AppDatabase;
++import com.example.fruit_app.entity.Order;
++import com.example.fruit_app.entity.OrderDetail;
++import com.example.fruit_app.entity.Product;
++import com.example.fruit_app.util.PreferenceManager;
++
++import java.util.ArrayList;
++import java.util.List;
++
++public class OrderActivity extends AppCompatActivity {
++
++    private ListView orderDetailListView;
++    private TextView totalAmountTextView;
++    private Button checkoutButton, continueShoppingButton;
++    private AppDatabase database;
++    private PreferenceManager preferenceManager;
++    private Order currentOrder;
++
++    @Override
++    protected void onCreate(Bundle savedInstanceState) {
++        super.onCreate(savedInstanceState);
++        setContentView(R.layout.activity_order);
++
++        database = AppDatabase.getDatabase(this);
++        preferenceManager = new PreferenceManager(this);
++
++        orderDetailListView = findViewById(R.id.orderDetailListView);
++        totalAmountTextView = findViewById(R.id.totalAmountTextView);
++        checkoutButton = findViewById(R.id.checkoutButton);
++        continueShoppingButton = findViewById(R.id.continueShoppingButton);
++
++        loadOrder();
++
++        checkoutButton.setOnClickListener(v -> {
++            if (currentOrder != null) {
++                Intent intent = new Intent(OrderActivity.this, CheckoutActivity.class);
++                intent.putExtra("order_id", currentOrder.id);
++                startActivity(intent);
++            }
++        });
++
++        continueShoppingButton.setOnClickListener(v -> {
++            startActivity(new Intent(OrderActivity.this, ProductListActivity.class));
++        });
++    }
++
++    private void loadOrder() {
++        new Thread(() -> {
++            int userId = preferenceManager.getUserId();
++            currentOrder = database.orderDao().getOrderByUserAndStatus(userId, "Pending");
++
++            if (currentOrder == null) {
++                currentOrder = new Order(userId, java.time.LocalDate.now().toString(), "Pending", 0);
++                long orderId = database.orderDao().insert(currentOrder);
++                currentOrder.id = (int) orderId;
++            }
++
++            List<OrderDetail> orderDetails = database.orderDetailDao()
++                    .getOrderDetailsByOrder(currentOrder.id);
++
++            List<String> itemList = new ArrayList<>();
++            double total = 0;
++
++            for (OrderDetail detail : orderDetails) {
++                Product product = database.productDao().getProductById(detail.productId);
++                if (product != null) {
++                    String itemText = product.name + " x" + detail.quantity + 
++                        " - " + String.format("%.0f VND", detail.price * detail.quantity);
++                    itemList.add(itemText);
++                    total += detail.price * detail.quantity;
++                }
++            }
++
++            double finalTotal = total;
++            currentOrder.totalAmount = total;
++            
++            runOnUiThread(() -> displayOrderDetails(itemList, finalTotal));
++        }).start();
++    }
++
++    private void displayOrderDetails(List<String> itemList, double total) {
++        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, 
++            android.R.layout.simple_list_item_1, itemList);
++        orderDetailListView.setAdapter(adapter);
++        totalAmountTextView.setText(String.format("Tổng cộng: %.0f VND", total));
++    }
++
++    @Override
++    protected void onResume() {
++        super.onResume();
++        loadOrder();
++    }
++}
+Index: app/src/main/java/com/example/fruit_app/CheckoutActivity.java
+===================================================================
+diff --git a/app/src/main/java/com/example/fruit_app/CheckoutActivity.java b/app/src/main/java/com/example/fruit_app/CheckoutActivity.java
+new file mode 100644
+--- /dev/null	(date 1775202332000)
++++ b/app/src/main/java/com/example/fruit_app/CheckoutActivity.java	(date 1775202332000)
+@@ -0,0 +1,97 @@
++package com.example.fruit_app;
++
++import android.content.Intent;
++import android.os.Bundle;
++import android.widget.ArrayAdapter;
++import android.widget.Button;
++import android.widget.ListView;
++import android.widget.TextView;
++
++import androidx.appcompat.app.AppCompatActivity;
++
++import com.example.fruit_app.database.AppDatabase;
++import com.example.fruit_app.entity.Order;
++import com.example.fruit_app.entity.OrderDetail;
++import com.example.fruit_app.entity.Product;
++
++import java.util.ArrayList;
++import java.util.List;
++
++public class CheckoutActivity extends AppCompatActivity {
++
++    private ListView orderDetailListView;
++    private TextView totalAmountTextView;
++    private Button payButton, backButton;
++    private AppDatabase database;
++    private Order order;
++
++    @Override
++    protected void onCreate(Bundle savedInstanceState) {
++        super.onCreate(savedInstanceState);
++        setContentView(R.layout.activity_checkout);
++
++        database = AppDatabase.getDatabase(this);
++
++        orderDetailListView = findViewById(R.id.checkoutDetailListView);
++        totalAmountTextView = findViewById(R.id.checkoutTotalTextView);
++        payButton = findViewById(R.id.payButton);
++        backButton = findViewById(R.id.backButton);
++
++        Intent intent = getIntent();
++        int orderId = intent.getIntExtra("order_id", 0);
++
++        loadOrder(orderId);
++
++        payButton.setOnClickListener(v -> processPayment());
++        backButton.setOnClickListener(v -> finish());
++    }
++
++    private void loadOrder(int orderId) {
++        new Thread(() -> {
++            Order order = database.orderDao().getOrderById(orderId);
++            this.order = order;
++
++            if (order != null) {
++                List<OrderDetail> orderDetails = database.orderDetailDao()
++                        .getOrderDetailsByOrder(orderId);
++
++                List<String> itemList = new ArrayList<>();
++                double total = 0;
++
++                for (OrderDetail detail : orderDetails) {
++                    Product product = database.productDao().getProductById(detail.productId);
++                    if (product != null) {
++                        String itemText = product.name + " x" + detail.quantity + 
++                            " - " + String.format("%.0f VND", detail.price * detail.quantity);
++                        itemList.add(itemText);
++                        total += detail.price * detail.quantity;
++                    }
++                }
++
++                double finalTotal = total;
++                runOnUiThread(() -> displayCheckout(itemList, finalTotal));
++            }
++        }).start();
++    }
++
++    private void displayCheckout(List<String> itemList, double total) {
++        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, 
++            android.R.layout.simple_list_item_1, itemList);
++        orderDetailListView.setAdapter(adapter);
++        totalAmountTextView.setText(String.format("Tổng cộng thanh toán: %.0f VND", total));
++    }
++
++    private void processPayment() {
++        new Thread(() -> {
++            order.status = "Paid";
++            database.orderDao().update(order);
++
++            runOnUiThread(() -> {
++                Intent intent = new Intent(CheckoutActivity.this, OrderConfirmationActivity.class);
++                intent.putExtra("order_id", order.id);
++                startActivity(intent);
++                finish();
++            });
++        }).start();
++    }
++}
+Index: app/src/main/java/com/example/fruit_app/MainActivity.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>package com.example.fruit_app;\r\n\r\nimport android.os.Bundle;\r\n\r\nimport androidx.activity.EdgeToEdge;\r\nimport androidx.appcompat.app.AppCompatActivity;\r\nimport androidx.core.graphics.Insets;\r\nimport androidx.core.view.ViewCompat;\r\nimport androidx.core.view.WindowInsetsCompat;\r\n\r\npublic class MainActivity extends AppCompatActivity {\r\n\r\n    @Override\r\n    protected void onCreate(Bundle savedInstanceState) {\r\n        super.onCreate(savedInstanceState);\r\n        EdgeToEdge.enable(this);\r\n        setContentView(R.layout.activity_main);\r\n        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main), (v, insets) -> {\r\n            Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());\r\n            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom);\r\n            return insets;\r\n        });\r\n    }\r\n}
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app/src/main/java/com/example/fruit_app/MainActivity.java b/app/src/main/java/com/example/fruit_app/MainActivity.java
+--- a/app/src/main/java/com/example/fruit_app/MainActivity.java	(revision b8f8b0ca3570ab4de9492822cf3e9f8f6490e6d0)
++++ b/app/src/main/java/com/example/fruit_app/MainActivity.java	(date 1775202622000)
+@@ -1,24 +1,64 @@
+ package com.example.fruit_app;
+ 
++import android.content.Intent;
+ import android.os.Bundle;
++import android.widget.Button;
++import android.widget.TextView;
+ 
+-import androidx.activity.EdgeToEdge;
+ import androidx.appcompat.app.AppCompatActivity;
+-import androidx.core.graphics.Insets;
+-import androidx.core.view.ViewCompat;
+-import androidx.core.view.WindowInsetsCompat;
++
++import com.example.fruit_app.util.PreferenceManager;
+ 
+ public class MainActivity extends AppCompatActivity {
+ 
++    private TextView welcomeTextView;
++    private Button viewProductsButton, viewCategoriesButton, viewCartButton, viewOrdersButton, logoutButton;
++    private PreferenceManager preferenceManager;
++
+     @Override
+     protected void onCreate(Bundle savedInstanceState) {
+         super.onCreate(savedInstanceState);
+-        EdgeToEdge.enable(this);
+         setContentView(R.layout.activity_main);
+-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main), (v, insets) -> {
+-            Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+-            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom);
+-            return insets;
++
++        preferenceManager = new PreferenceManager(this);
++
++        // Check if logged in
++        if (!preferenceManager.isLoggedIn()) {
++            startActivity(new Intent(MainActivity.this, LoginActivity.class));
++            finish();
++            return;
++        }
++
++        welcomeTextView = findViewById(R.id.welcomeTextView);
++        viewProductsButton = findViewById(R.id.viewProductsButton);
++        viewCategoriesButton = findViewById(R.id.viewCategoriesButton);
++        viewCartButton = findViewById(R.id.viewCartButton);
++        viewOrdersButton = findViewById(R.id.viewOrdersButton);
++        logoutButton = findViewById(R.id.logoutButton);
++
++        // Set welcome message
++        welcomeTextView.setText("Chào mừng, " + preferenceManager.getUsername());
++
++        viewProductsButton.setOnClickListener(v -> 
++            startActivity(new Intent(MainActivity.this, ProductListActivity.class))
++        );
++
++        viewCategoriesButton.setOnClickListener(v -> 
++            startActivity(new Intent(MainActivity.this, CategoryListActivity.class))
++        );
++
++        viewCartButton.setOnClickListener(v -> 
++            startActivity(new Intent(MainActivity.this, OrderActivity.class))
++        );
++
++        viewOrdersButton.setOnClickListener(v -> 
++            startActivity(new Intent(MainActivity.this, OrderListActivity.class))
++        );
++
++        logoutButton.setOnClickListener(v -> {
++            preferenceManager.logout();
++            startActivity(new Intent(MainActivity.this, LoginActivity.class));
++            finish();
+         });
+     }
+ }
+\ No newline at end of file
+Index: app/src/main/java/com/example/fruit_app/CategoryListActivity.java
+===================================================================
+diff --git a/app/src/main/java/com/example/fruit_app/CategoryListActivity.java b/app/src/main/java/com/example/fruit_app/CategoryListActivity.java
+new file mode 100644
+--- /dev/null	(date 1775202622000)
++++ b/app/src/main/java/com/example/fruit_app/CategoryListActivity.java	(date 1775202622000)
+@@ -0,0 +1,54 @@
++package com.example.fruit_app;
++
++import android.content.Intent;
++import android.os.Bundle;
++import android.widget.ArrayAdapter;
++import android.widget.ListView;
++
++import androidx.appcompat.app.AppCompatActivity;
++
++import com.example.fruit_app.database.AppDatabase;
++import com.example.fruit_app.entity.Category;
++
++import java.util.ArrayList;
++import java.util.List;
++
++public class CategoryListActivity extends AppCompatActivity {
++
++    private ListView listView;
++    private AppDatabase database;
++    private List<Category> categoryList;
++
++    @Override
++    protected void onCreate(Bundle savedInstanceState) {
++        super.onCreate(savedInstanceState);
++        setContentView(R.layout.activity_category_list);
++
++        listView = findViewById(R.id.categoryListView);
++        database = AppDatabase.getDatabase(this);
++
++        // Load categories
++        new Thread(() -> {
++            categoryList = database.categoryDao().getAllCategories();
++            runOnUiThread(this::displayCategories);
++        }).start();
++    }
++
++    private void displayCategories() {
++        List<String> categoryNames = new ArrayList<>();
++        for (Category category : categoryList) {
++            categoryNames.add(category.name + "\n" + category.description);
++        }
++
++        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, categoryNames);
++        listView.setAdapter(adapter);
++
++        listView.setOnItemClickListener((parent, view, position, id) -> {
++            Category selectedCategory = categoryList.get(position);
++            Intent intent = new Intent(CategoryListActivity.this, ProductListActivity.class);
++            intent.putExtra("category_id", selectedCategory.id);
++            intent.putExtra("category_name", selectedCategory.name);
++            startActivity(intent);
++        });
++    }
++}
